@@ -66,6 +66,37 @@ def test_modes_clipping_and_category_independence():
     assert one.layout.shapes[0].x1 == date(2020, 3, 1)
 
 
+def test_covid_closure_band_and_clipping():
+    rows = [record('EB2', month=m) for m in range(1, 13)] + [record('F1', preference_type='family')]
+    def figure(start, end, preference='employment'):
+        return build_figure(rows, preference, 'final_action', ['EB2' if preference == 'employment' else 'F1'],
+                            'china_mainland_born', start, end, shading='covid_closure')
+    def bands(fig):
+        return [(s.name, s.x0, s.x1) for s in fig.layout.shapes if s.type == 'rect']
+    def labels(fig):
+        return {a.text: a.y for a in fig.layout.annotations if 'COVID' in a.text}
+    full = figure(date(2019, 6, 1), date(2023, 6, 1))
+    # The wider China period is drawn first, so the consular closure sits in front of it.
+    assert bands(full) == [('China COVID-19 period', date(2019, 12, 31), date(2023, 1, 8)),
+                           ('COVID-19 closure', date(2020, 3, 20), date(2020, 7, 15))]
+    assert all(s.layer == 'below' and s.yref == 'y domain' for s in full.layout.shapes)
+    assert full.layout.shapes[0].fillcolor != full.layout.shapes[1].fillcolor
+    assert labels(full)['China COVID-19 period'] > labels(full)['COVID-19 closure']
+    assert bands(figure(date(2020, 5, 1), date(2020, 6, 1))) == [
+        ('China COVID-19 period', date(2020, 5, 1), date(2020, 6, 1)),
+        ('COVID-19 closure', date(2020, 5, 1), date(2020, 6, 1))]
+    after_closure = figure(date(2021, 1, 1), date(2021, 6, 1))
+    assert bands(after_closure) == [('China COVID-19 period', date(2021, 1, 1), date(2021, 6, 1))]
+    assert list(labels(after_closure)) == ['China COVID-19 period']
+    outside = figure(date(2023, 2, 1), date(2023, 6, 1))
+    assert not outside.layout.shapes and not labels(outside)
+    # One selected month spans the padded axis rather than producing zero-width bands.
+    assert [b[1:] for b in bands(figure(date(2020, 4, 1), date(2020, 4, 1)))] == [
+        (date(2020, 4, 1), date(2020, 5, 1))] * 2
+    assert [b[0] for b in bands(figure(date(2019, 6, 1), date(2023, 6, 1), 'family'))] == [
+        'China COVID-19 period', 'COVID-19 closure']
+
+
 def test_both_tab_callbacks_and_family_fallback():
     app = create_app()
     for prefix in ('', 'wait-'):
@@ -73,10 +104,11 @@ def test_both_tab_callbacks_and_family_fallback():
                         if prefix + 'shading.options' in k and (bool(prefix) == ('wait-' in k)))
         opts, value = settings('employment', 'eb_inversion')
         assert value == 'eb_inversion'
-        assert [o['label'] for o in opts] == ['None', 'US gov administration', 'EB inversion']
+        assert [o['label'] for o in opts] == ['None', 'US gov administration', 'COVID-19 closure', 'EB inversion']
         opts, value = settings('family', 'eb_inversion')
-        assert value == 'administration' and len(opts) == 2
+        assert value == 'administration' and len(opts) == 3
         assert settings('family', 'none')[1] == 'none'
+        assert settings('family', 'covid_closure')[1] == 'covid_closure'
         render = next(v['callback'].__wrapped__ for k, v in app.callback_map.items()
                       if prefix + 'figure.figure' in k and (bool(prefix) == ('wait-' in k)))
         args = ['employment', 'final_action', ['EB1'], 'china_mainland_born', [0, 190], [], []]
@@ -84,6 +116,10 @@ def test_both_tab_callbacks_and_family_fallback():
         inversion, _, _ = render(*args, 'eb_inversion')
         assert not none.layout.shapes
         assert inversion.layout.shapes and all(s.name == 'EB inversion' for s in inversion.layout.shapes)
+        covid, _, _ = render(*args, 'covid_closure')
+        assert [s.name for s in covid.layout.shapes] == ['China COVID-19 period', 'COVID-19 closure']
         args[0] = 'family'
         family, _, _ = render(*args, 'eb_inversion')
         assert any(a.text == 'Obama' for a in family.layout.annotations)
+        covid, _, _ = render(*args, 'covid_closure')
+        assert [s.name for s in covid.layout.shapes] == ['China COVID-19 period', 'COVID-19 closure']

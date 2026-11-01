@@ -21,10 +21,20 @@ ADMINISTRATIONS = [
     ("Biden", date(2021, 1, 20), date(2025, 1, 20), "rgba(20, 150, 130, 0.09)"),
     ("Trump (2nd)", date(2025, 1, 20), None, "rgba(234, 137, 64, 0.10)"),
 ]
+# Wuhan cluster first reported: https://www.who.int/news/item/27-04-2020-who-timeline---covid-19
+# China downgrades COVID-19 to Class B, ending quarantine: https://www.loc.gov/item/global-legal-monitor/2023-01-06/china-management-of-covid-19-downgraded
+# Worldwide routine-visa suspension: https://www.aila.org/library/dos-suspends-routine-visa-services-covid19
+# Phased resumption from July 15: https://iso.mit.edu/news/usdos-provides-details-on-phased-resumption-of-routine-visa-services/
+# Drawn in order, so the consular closure sits in front of the wider China period; labels are stacked.
+COVID_BANDS = [
+    ("China COVID-19 period", date(2019, 12, 31), date(2023, 1, 8), "rgba(245, 158, 11, 0.13)", 1.055),
+    ("COVID-19 closure", date(2020, 3, 20), date(2020, 7, 15), "rgba(220, 38, 38, 0.10)", 1.01),
+]
 REQUIRED = {"bulletin_month", "preference_type", "chart_type", "category",
             "chargeability_area", "cutoff_status", "cutoff_date"}
 LABELS = {
     "none": "None", "administration": "US gov administration", "eb_inversion": "EB inversion",
+    "covid_closure": "COVID-19 closure",
     "family": "Family", "employment": "Employment",
     "final_action": "Final action", "date_for_filing": "Dates for filing",
     "all_chargeability_areas_except_listed": "All chargeability areas except listed",
@@ -181,7 +191,7 @@ def build_figure(rows, preference, chart, categories, area, start, end, show_fis
 
 
 def shading_modes(preference):
-    return ["none", "administration"] + (["eb_inversion"] if preference == "employment" else [])
+    return ["none", "administration", "covid_closure"] + (["eb_inversion"] if preference == "employment" else [])
 
 
 def valid_shading(preference, shading):
@@ -211,6 +221,15 @@ def decorate_figure(fig, start, end, category_count, show_fiscal_years=False, sh
                 fig.add_shape(type="rect", name="EB inversion", xref="x", yref="y domain",
                               x0=left, x1=right, y0=0, y1=1, fillcolor="rgba(139, 92, 246, 0.12)",
                               line_width=0, layer="below")
+    for name, band_start, band_end, color, label_y in COVID_BANDS if shading == "covid_closure" else ():
+        left, right = max(start, band_start), min(axis_end, band_end)
+        if left >= right:
+            continue
+        fig.add_shape(type="rect", name=name, xref="x", yref="y domain", x0=left, x1=right,
+                      y0=0, y1=1, fillcolor=color, line_width=0, layer="below")
+        fig.add_annotation(text=name, x=left + (right - left) / 2, y=label_y,
+                           xref="x", yref="paper", yanchor="bottom", showarrow=False,
+                           font=dict(size=11, color="#52647a"))
     if show_fiscal_years or show_quarters:
         for year in range(start.year, axis_end.year + 1):
             for month in (1, 4, 7, 10):
@@ -252,7 +271,10 @@ def create_app(path=CSV_PATH):
         html.Div(control("Plot shading", prefix + "shading", shading_modes("employment"), "administration"),
                  style={"maxWidth": "360px", "marginBottom": "12px"}),
         html.P("EB inversion highlights months when EB3’s cutoff is later than EB2’s for the selected "
-               "chart type and area. Current outranks dated cutoffs; missing or unavailable data is unshaded.",
+               "chart type and area. Current outranks dated cutoffs; missing or unavailable data is unshaded. "
+               "COVID-19 closure marks Mar 20 – Jul 15, 2020, when routine visa services were suspended "
+               "at US embassies and consulates worldwide, in front of an amber band for China's COVID-19 "
+               "period (Dec 31, 2019 first report – Jan 8, 2023 end of quarantine).",
                className="key"),
         html.Section([html.Div(id=prefix + "range-label", className="range-label"),
                       dcc.RangeSlider(id=prefix + "months", min=0, max=len(months)-1, step=1,
