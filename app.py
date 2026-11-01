@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import csv
+
+from waiting import WAIT_CATEGORIES, calculate_waits, build_waiting_figure
+from shading import inversion_intervals
 from datetime import date
 from pathlib import Path
 
@@ -21,6 +24,7 @@ ADMINISTRATIONS = [
 REQUIRED = {"bulletin_month", "preference_type", "chart_type", "category",
             "chargeability_area", "cutoff_status", "cutoff_date"}
 LABELS = {
+    "none": "None", "administration": "US gov administration", "eb_inversion": "EB inversion",
     "family": "Family", "employment": "Employment",
     "final_action": "Final action", "date_for_filing": "Dates for filing",
     "all_chargeability_areas_except_listed": "All chargeability areas except listed",
@@ -107,7 +111,7 @@ def category_colors(rows, preference):
 
 
 def build_figure(rows, preference, chart, categories, area, start, end, show_fiscal_years=False,
-                 show_quarters=False):
+                 show_quarters=False, shading="administration"):
     categories = categories or []
     colors = category_colors(rows, preference)
     selected = [r for r in rows if r["preference_type"] == preference and
@@ -160,12 +164,38 @@ def build_figure(rows, preference, chart, categories, area, start, end, show_fis
             legendgroup=category, showlegend=True, hoverinfo="skip",
             marker=dict(color=color, size=7, symbol="circle")
         ), row=1, col=1)
-    fig.update_layout(template="plotly_white", height=max(620, 480 + 23 * len(categories)),
+    shading = valid_shading(preference, shading)
+    intervals = inversion_intervals(rows, chart, area) if shading == "eb_inversion" else ()
+    decorate_figure(fig, start, end, len(categories), show_fiscal_years, show_quarters,
+                    shading, intervals)
+    fig.update_xaxes(title_text="Bulletin publish month", row=2, col=1)
+    fig.update_yaxes(title_text="Cutoff date", type="date", tickformat="%b %Y", row=1, col=1)
+    fig.update_yaxes(title_text="Status", type="category", categoryorder="array",
+                     categoryarray=categories, tickvals=categories,
+                     ticktext=[label(c) for c in categories], row=2, col=1)
+    if not selected:
+        fig.add_annotation(text="Select at least one category." if not categories else
+                           "No records match these filters and months.", x=0.5, y=0.65,
+                           xref="paper", yref="paper", showarrow=False)
+    return fig
+
+
+def shading_modes(preference):
+    return ["none", "administration"] + (["eb_inversion"] if preference == "employment" else [])
+
+
+def valid_shading(preference, shading):
+    return shading if shading in shading_modes(preference) else "administration"
+
+
+def decorate_figure(fig, start, end, category_count, show_fiscal_years=False, show_quarters=False,
+                    shading="administration", intervals=()):
+    fig.update_layout(template="plotly_white", height=max(620, 480 + 23 * category_count),
                       margin=dict(l=80, r=25, t=80, b=60), hovermode="closest",
                       legend=dict(orientation="h", y=1.10, yanchor="bottom", groupclick="togglegroup"))
     # A one-month selection still needs visible horizontal space for markers.
     axis_end = month_range(end, date(end.year + (end.month == 12), end.month % 12 + 1, 1))[-1] if start == end else end
-    for name, term_start, term_end, color in ADMINISTRATIONS:
+    for name, term_start, term_end, color in ADMINISTRATIONS if shading == "administration" else ():
         left, right = max(start, term_start), min(axis_end, term_end or axis_end)
         if left >= right:
             continue
@@ -174,6 +204,13 @@ def build_figure(rows, preference, chart, categories, area, start, end, show_fis
         fig.add_annotation(text=name, x=left + (right - left) / 2, y=1.01,
                            xref="x", yref="paper", yanchor="bottom", showarrow=False,
                            font=dict(size=11, color="#52647a"))
+    if shading == "eb_inversion":
+        for interval_start, interval_end in intervals:
+            left, right = max(start, interval_start), min(axis_end, interval_end)
+            if left < right:
+                fig.add_shape(type="rect", name="EB inversion", xref="x", yref="y domain",
+                              x0=left, x1=right, y0=0, y1=1, fillcolor="rgba(139, 92, 246, 0.12)",
+                              line_width=0, layer="below")
     if show_fiscal_years or show_quarters:
         for year in range(start.year, axis_end.year + 1):
             for month in (1, 4, 7, 10):
@@ -191,85 +228,123 @@ def build_figure(rows, preference, chart, categories, area, start, end, show_fis
                                         dash="dash" if fiscal_boundary else "3px,3px"))
     fig.update_xaxes(type="date", range=[start, axis_end], tickformat="%b %Y", showgrid=False)
     fig.update_yaxes(showgrid=False)
-    fig.update_xaxes(title_text="Bulletin publish month", row=2, col=1)
-    fig.update_yaxes(title_text="Cutoff date", type="date", tickformat="%b %Y", row=1, col=1)
-    fig.update_yaxes(title_text="Status", type="category", categoryorder="array",
-                     categoryarray=categories, tickvals=categories,
-                     ticktext=[label(c) for c in categories], row=2, col=1)
-    if not selected:
-        fig.add_annotation(text="Select at least one category." if not categories else
-                           "No records match these filters and months.", x=0.5, y=0.65,
-                           xref="paper", yref="paper", showarrow=False)
-    return fig
 
 
 def create_app(path=CSV_PATH):
     rows = load_data(path)
     months = month_range(rows[0]["month"], rows[-1]["month"])
+    waiting_rows = [r for r in rows if r["category"] in WAIT_CATEGORIES]
+    waits = calculate_waits(waiting_rows)
     app = Dash(__name__)
     app.title = "Visa Bulletin Visualizer"
     def control(title, ident, values, value, multi=False):
         return html.Div([html.Label(title, htmlFor=ident), dcc.Dropdown(
             id=ident, options=options(values), value=value, multi=multi, clearable=multi)], className="control")
-    categories = choices(rows, "category", preference_type="employment", chart_type="final_action")
-    app.layout = html.Main([
-        html.Header([html.P("VISA BULLETIN • HISTORICAL DATA", className="eyebrow"),
-                     html.H1("Priority dates over time"),
-                     html.P("Compare categories and explore how cutoff dates move across monthly bulletins.")]),
+    def panel(prefix, panel_rows):
+        categories = choices(panel_rows, "category", preference_type="employment", chart_type="final_action")
+        return html.Div([
         html.Section([
-            control("Preference type", "preference", ["family", "employment"], "employment"),
-            control("Chart type", "chart", choices(rows, "chart_type", preference_type="employment"), "final_action"),
-            control("Category", "categories", categories, ["EB1", "EB2", "EB3"], True),
-            control("Chargeability area", "area", choices(rows, "chargeability_area", preference_type="employment", chart_type="final_action"), "china_mainland_born"),
+            control("Preference type", prefix + "preference", ["family", "employment"], "employment"),
+            control("Chart type", prefix + "chart", choices(panel_rows, "chart_type", preference_type="employment"), "final_action"),
+            control("Category", prefix + "categories", categories, ["EB1", "EB2", "EB3"], True),
+            control("Chargeability area", prefix + "area", choices(panel_rows, "chargeability_area", preference_type="employment", chart_type="final_action"), "china_mainland_born"),
         ], className="filters"),
-        html.Section([html.Div(id="range-label", className="range-label"),
-                      dcc.RangeSlider(id="months", min=0, max=len(months)-1, step=1,
+        html.Div(control("Plot shading", prefix + "shading", shading_modes("employment"), "administration"),
+                 style={"maxWidth": "360px", "marginBottom": "12px"}),
+        html.P("EB inversion highlights months when EB3’s cutoff is later than EB2’s for the selected "
+               "chart type and area. Current outranks dated cutoffs; missing or unavailable data is unshaded.",
+               className="key"),
+        html.Section([html.Div(id=prefix + "range-label", className="range-label"),
+                      dcc.RangeSlider(id=prefix + "months", min=0, max=len(months)-1, step=1,
                                       value=[0, len(months)-1], allowCross=False,
                                       marks={i: str(m.year) for i, m in enumerate(months) if m.month == 1},
                                       updatemode="drag")], className="range-panel"),
-        dcc.Checklist(id="fiscal-years",
+        dcc.Checklist(id=prefix + "fiscal-years",
                       options=[{"label": " Show fiscal year boundaries (October 1)", "value": "show"}],
                       value=[], style={"marginTop": "18px"}),
-        dcc.Checklist(id="quarters",
+        dcc.Checklist(id=prefix + "quarters",
                       options=[{"label": " Show quarter boundaries (Jan, Apr, Jul, Oct 1)", "value": "show"}],
                       value=[]),
-        html.P(["Solid lines and circles: dated cutoff. Dashed lines and stars: current, plotted at the first day of the bulletin month. ",
+        html.P("Months = elapsed days / 30.4375. Darker: actual; lighter: inferred. "
+               "Inferred current points use stars and dashed lines. Actual waits use the first observed "
+               "current or cutoff ≥ PD, including the starting month. These are historical cutoff-based waits, "
+               "not visa issuance or processing times. Status: × unavailable; ○ missing; ◇ not observed within available data.",
+               className="key") if prefix else html.P(["Solid lines and circles: dated cutoff. Dashed lines and stars: current, plotted at the first day of the bulletin month. ",
                 "Status strip: × unavailable; ○ missing data. Gaps are never connected."], className="key"),
-        dcc.Graph(id="figure", config={"displaylogo": False, "responsive": True}),
+        dcc.Graph(id=prefix + "figure", config={"displaylogo": False}, responsive=True, style={"height": "620px"}, className="chart"),
+        ])
+
+    app.layout = html.Main([
+        html.Header([html.P("VISA BULLETIN • HISTORICAL DATA", className="eyebrow"),
+                     html.H1("Visa Bulletin Explorer"),
+                     html.P("Explore cutoff dates and historical waiting times.")]),
+        dcc.Tabs(id="view-tab", value="cutoffs", children=[
+            dcc.Tab(label="Visa bulletin cutoff dates", value="cutoffs"),
+            dcc.Tab(label="Inferred and actual visa waiting times", value="waiting"),
+        ]),
+        html.Div(panel("", rows), id="cutoff-panel"),
+        html.Div(panel("wait-", waiting_rows), id="waiting-panel", style={"display": "none"}),
         html.Footer(f"Source: data/visa-priority-dates.csv · {len(rows):,} records · Restart the server to reload data.")
     ])
 
-    @app.callback(Output("chart", "options"), Output("chart", "value"),
-                  Input("preference", "value"), State("chart", "value"))
-    def update_chart(preference, current):
-        values = choices(rows, "chart_type", preference_type=preference)
-        return options(values), retain_single(current, values, "final_action")
+    @app.callback(Output("cutoff-panel", "style"), Output("waiting-panel", "style"), Input("view-tab", "value"))
+    def switch_tab(tab):
+        return ({"display": "block" if tab == "cutoffs" else "none"},
+                {"display": "block" if tab == "waiting" else "none"})
 
-    @app.callback(Output("categories", "options"), Output("categories", "value"),
-                  Input("preference", "value"), Input("chart", "value"), State("categories", "value"))
-    def update_categories(preference, chart, current):
-        values = choices(rows, "category", preference_type=preference, chart_type=chart)
-        return options(values), retain_categories(current, values)
+    def register_panel(prefix, panel_rows):
+        @app.callback(Output(prefix + "shading", "options"), Output(prefix + "shading", "value"),
+                      Input(prefix + "preference", "value"), State(prefix + "shading", "value"))
+        def update_shading(preference, current):
+            return options(shading_modes(preference)), valid_shading(preference, current)
 
-    @app.callback(Output("area", "options"), Output("area", "value"),
-                  Input("preference", "value"), Input("chart", "value"), Input("categories", "value"),
-                  State("area", "value"))
-    def update_area(preference, chart, selected, current):
-        filters = dict(preference_type=preference, chart_type=chart)
-        if selected:
-            filters["category"] = selected
-        values = choices(rows, "chargeability_area", **filters)
-        return options(values), retain_single(current, values, "all_chargeability_areas_except_listed")
+        @app.callback(Output(prefix + "chart", "options"), Output(prefix + "chart", "value"),
+                      Input(prefix + "preference", "value"), State(prefix + "chart", "value"))
+        def update_chart(preference, current):
+            values = choices(panel_rows, "chart_type", preference_type=preference)
+            return options(values), retain_single(current, values, "final_action")
 
-    @app.callback(Output("figure", "figure"), Output("range-label", "children"),
-                  Input("preference", "value"), Input("chart", "value"), Input("categories", "value"),
-                  Input("area", "value"), Input("months", "value"), Input("fiscal-years", "value"),
-                  Input("quarters", "value"))
-    def update_figure(preference, chart, selected, area, bounds, fiscal_years, quarters):
-        start, end = (months[i] for i in bounds)
-        return build_figure(rows, preference, chart, selected, area, start, end,
-                            show_fiscal_years="show" in (fiscal_years or []),
-                            show_quarters="show" in (quarters or [])), f"Bulletin months: {start:%b %Y} – {end:%b %Y}"
+        @app.callback(Output(prefix + "categories", "options"), Output(prefix + "categories", "value"),
+                      Input(prefix + "preference", "value"), Input(prefix + "chart", "value"), State(prefix + "categories", "value"))
+        def update_categories(preference, chart, current):
+            values = choices(panel_rows, "category", preference_type=preference, chart_type=chart)
+            return options(values), retain_categories(current, values)
+
+        @app.callback(Output(prefix + "area", "options"), Output(prefix + "area", "value"),
+                      Input(prefix + "preference", "value"), Input(prefix + "chart", "value"), Input(prefix + "categories", "value"),
+                      State(prefix + "area", "value"))
+        def update_area(preference, chart, selected, current):
+            filters = dict(preference_type=preference, chart_type=chart)
+            if selected:
+                filters["category"] = selected
+            values = choices(panel_rows, "chargeability_area", **filters)
+            return options(values), retain_single(current, values, "all_chargeability_areas_except_listed")
+
+        @app.callback(Output(prefix + "figure", "figure"), Output(prefix + "range-label", "children"),
+                      Output(prefix + "figure", "style"),
+                      Input(prefix + "preference", "value"), Input(prefix + "chart", "value"), Input(prefix + "categories", "value"),
+                      Input(prefix + "area", "value"), Input(prefix + "months", "value"), Input(prefix + "fiscal-years", "value"),
+                      Input(prefix + "quarters", "value"), Input(prefix + "shading", "value"))
+        def update_figure(preference, chart, selected, area, bounds, fiscal_years, quarters, shading):
+            start, end = (months[i] for i in bounds)
+            shading = valid_shading(preference, shading)
+            # Upstream controls may update before the category dropdown catches up.
+            available = choices(panel_rows, "category", preference_type=preference, chart_type=chart)
+            selected = [category for category in (selected or []) if category in available]
+            if prefix:
+                fig = build_waiting_figure(waits, preference, chart, selected, area, start, end,
+                                           category_colors(rows, preference))
+                decorate_figure(fig, start, end, 2 * len(selected or []),
+                                "show" in (fiscal_years or []), "show" in (quarters or []), shading,
+                                inversion_intervals(rows, chart, area) if shading == "eb_inversion" else ())
+            else:
+                fig = build_figure(rows, preference, chart, selected, area, start, end,
+                                   show_fiscal_years="show" in (fiscal_years or []),
+                                   show_quarters="show" in (quarters or []), shading=shading)
+            return fig, f"Bulletin months: {start:%b %Y} – {end:%b %Y}", {"height": f"{fig.layout.height}px"}
+
+    register_panel("", rows)
+    register_panel("wait-", waiting_rows)
 
     return app
 

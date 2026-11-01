@@ -9,7 +9,7 @@ label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
 .range-panel { background: white; padding: 22px 24px 32px; border-radius: 12px; }
 .range-label { font-size: 14px; font-weight: 600; margin-bottom: 24px; }
 .key, footer { font-size: 13px; line-height: 1.7; color: #52647a; }
-#figure { border-radius: 12px; overflow: hidden; background: white; }
+.chart { border-radius: 12px; overflow: hidden; background: white; }
 footer { margin-top: 18px; }
 @media (max-width: 900px) { .filters { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 550px) { main { padding: 20px 10px; } .filters { grid-template-columns: 1fr; padding: 16px; } .rc-slider-mark-text { transform: translateX(-50%) rotate(-55deg) !important; font-size: 10px; } }

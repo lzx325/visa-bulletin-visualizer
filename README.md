@@ -23,6 +23,8 @@ Use the month-range slider to select the visible interval. Drag within the chart
 
 Check **Show fiscal year boundaries (October 1)** to add thick dashed lines across both chart panels. Independently enable **Show quarter boundaries (Jan, Apr, Jul, Oct 1)** for thin grey dashed lines. Every quarter uses the same grey color, 1-pixel width, and short pattern of 3-pixel dashes with 3-pixel gaps. Both options are off by default. When both are enabled, October 1 uses a single thick fiscal-year line.
 
+Each tab has an independent **Plot shading** selector, defaulting to **US gov administration**. Choose **None** to remove shading, or **EB inversion** (Employment only) for light-purple bands where EB3's cutoff is strictly later than EB2's. Inversion uses the selected chart type and chargeability area, regardless of plotted categories, and compares EB3 rather than EB3 other workers. Current outranks every dated cutoff; both current, equal dates, missing records, and unavailable cutoffs are unshaded. Qualifying calendar months are merged and clipped to the visible range. On the waiting-time tab, inversion refers to the bulletin cutoffs for each plotted month. Switching to Family while inversion is selected restores administration shading. Fiscal/quarter boundary toggles remain independent.
+
 - Solid segments connect dated cutoffs. Circular dots identify dated records.
 - Current records use star markers and the first day of the bulletin month as their vertical position. Segments touching a current point are dashed.
 - Unavailable records break the line and appear as colored × markers in the status strip.
@@ -31,6 +33,19 @@ Check **Show fiscal year boundaries (October 1)** to add thick dashed lines acro
 - Subtle background bands mark Obama, Trump’s first term, Biden, and Trump’s second term. Boundaries use January 20 inauguration dates ([National Archives](https://www.archives.gov/research/census/presidents), [USAGov](https://www.usa.gov/presidents)); bands are clipped to the selected month range. Both Trump terms use the same shading.
 
 The chart starts with employment final-action data, only EB1, EB2, and EB3 selected, China (mainland born), and the complete available month range. No database or external data service is required.
+
+## Waiting times tab
+
+The **Waiting times** tab has its own filters, month range, and boundary toggles. Switching tabs preserves each tab's state. It supports EB1, EB2, EB3, EB3 other workers, and F1/F2A/F2B/F3/F4.
+
+Each plotted month represents a hypothetical applicant whose priority date (PD) is the first day of that month:
+
+- **Inferred:** `(PD − that month's cutoff).days / 30.4375`. Current means zero; negative values are retained. Lighter category colors identify inferred values, with stars/dashed segments for current and circles/solid segments otherwise.
+- **Actual:** Search the complete series from that month, inclusive, for the first current bulletin or cutoff **equal to or later than PD**. Plot `(qualifying bulletin month − PD).days / 30.4375`, using stronger category colors with circles and solid lines. This inclusive comparison is the dashboard's chosen analytical convention. These are historical cutoff-based waits, not measured visa issuance or processing times.
+
+Both measures use fractional **months**; hover shows two decimal places and exact days. Narrowing the displayed range never truncates the search for a later qualifying bulletin. Missing history before the first observed match is flagged in hover. Unavailable records are known nonqualifying observations. Unresolved actual waits are left blank and marked with hollow diamonds in the status strip; inferred unavailable/missing values use X/hollow-circle markers. No future values are extrapolated.
+
+Results are precomputed at server startup. No additional data or dependencies are needed.
 
 ## Tests
 

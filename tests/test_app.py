@@ -118,10 +118,10 @@ def test_app_routes_and_render_callback(fiscal_years, quarters):
     callback = next(k for k in app.callback_map if "figure.figure" in k)
     result = client.post("/_dash-update-component", json={
         "output": callback,
-        "outputs": [{"id": "figure", "property": "figure"}, {"id": "range-label", "property": "children"}],
+        "outputs": [{"id": "figure", "property": "figure"}, {"id": "range-label", "property": "children"}, {"id": "figure", "property": "style"}],
         "inputs": [{"id": i, "property": "value", "value": v} for i, v in [
             ("preference", "family"), ("chart", "final_action"), ("categories", ["F1", "F2A"]),
-            ("area", "india"), ("months", [0, 12]), ("fiscal-years", fiscal_years), ("quarters", quarters)]],
+            ("area", "india"), ("months", [0, 12]), ("fiscal-years", fiscal_years), ("quarters", quarters), ("shading", "administration")]],
         "state": [], "changedPropIds": ["months.value"]})
     assert result.status_code == 200
     payload = result.get_json()["response"]
